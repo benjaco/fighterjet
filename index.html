@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Document</title>
+</head>
+
+<body>
+    <canvas id="canvas" width="300" height="300" style="width: 300px;height: 300px;border: 1px solid gray"></canvas>
+    <div id="gamepads"></div>
+    <script>
+        let el = document.getElementById("canvas")
+        let ctx = el.getContext('2d');
+
+        var keys = [];
+        window.addEventListener("keydown",
+            function (e) {
+                keys[e.keyCode] = true;
+            },
+            false);
+
+        window.addEventListener('keyup',
+            function (e) {
+                keys[e.keyCode] = false;
+            },
+            false);
+
+        function wrap(x, y, opt) {
+            if (y > opt.height) {
+                y = 0
+            }
+            if (y < 0) {
+                y = opt.height
+            }
+            if (x > opt.width) {
+                x = 0
+            }
+            if (x < 0) {
+                x = opt.width
+            }
+            return [x, y]
+        }
+
+        class GameLoop {
+            constructor(fn, ctx, el) {
+                this.fn = fn;
+                this.ctx = ctx;
+                this.start = this.start.bind(this)
+                this.lastFrame = Date.now()
+
+                this.dims = { width: el.width, height: el.height }
+            }
+            start() {
+                let thisFrame = Date.now()
+                ctx.fillStyle = '#828282';
+                ctx.fillRect(0, 0, 300, 300)
+                this.fn(thisFrame - this.lastFrame, { dims: this.dims })
+                this.lastFrame = thisFrame
+                requestAnimationFrame(_ => this.start())
+            }
+        }
+
+        class Fighter {
+            constructor(keyFn, image, color, altstart = false, onHit = false) {
+                this.keyFn = keyFn;
+                this.onHit = onHit;
+                this.image = image;
+
+                this.x = 100 + (altstart ? 200 : 0);
+                this.y = 100;
+                this.angleInRadians = 0;
+                this.color = color;
+
+                this.points = 0;
+                this.bullets = []
+                this.ttNextFire = 0
+                this.otherJets = []
+
+                this.render = this.render.bind(this)
+
+            }
+
+            render(ctx, time, opt) {
+                let keys = this.keyFn();
+
+                for (let enemy of this.otherJets) {
+                    for (let bullet of enemy.bullets) {
+                        if (Math.abs(bullet.y - this.y) < 15 && Math.abs(bullet.x - this.x) < 15) {
+                            bullet.time = 0;
+                            enemy.points++
+                            
+                            if (this.onHit) this.onHit();
+                        }
+                    }
+                }
+
+                // stearing
+                {
+                    this.angleInRadians -= (time / 700) * keys.dir * -1
+
+                    let dest = time / 20
+                    this.y += Math.sin(this.angleInRadians) * dest
+                    this.x += Math.cos(this.angleInRadians) * dest
+                    let w = wrap(this.x, this.y, opt.dims);
+                    this.x = w[0]
+                    this.y = w[1]
+
+                    ctx.translate(this.x, this.y);
+                    ctx.rotate(this.angleInRadians + Math.PI / 2);
+                    ctx.drawImage(this.image, -10, -10);
+                    ctx.rotate(-this.angleInRadians - Math.PI / 2);
+                    ctx.translate(-this.x, -this.y);
+                }
+
+                // bullits
+                {
+                    if (keys.fire && Date.now() > this.ttNextFire) {
+                        this.ttNextFire = Date.now() + 1000
+                        this.bullets.push({
+                            x: this.x,
+                            y: this.y,
+                            a: this.angleInRadians,
+                            time: Date.now()
+                        })
+                    }
+                    this.bullets = this.bullets.filter(i => i.time > Date.now() - 2000);
+                    for (let bullet of this.bullets) {
+                        let dest = time / 8
+                        bullet.y += Math.sin(bullet.a) * dest
+                        bullet.x += Math.cos(bullet.a) * dest
+                        let w = wrap(bullet.x, bullet.y, opt.dims);
+                        bullet.x = w[0]
+                        bullet.y = w[1]
+
+                        ctx.beginPath();
+                        ctx.strokeStyle = this.color;
+                        ctx.arc(bullet.x, bullet.y, 1, 0, 2 * Math.PI, true);
+                        ctx.stroke();
+                    }
+                }
+            }
+        }
+
+        function loadImage(name) {
+            return new Promise((resolve, reject) => {
+                var imgTile = new Image();
+                imgTile.src = name;
+                imgTile.onload = function () {
+                    resolve(imgTile)
+                }
+            })
+        }
+
+        let whiteControler = false;
+        let blackControler = false;
+        var gamepadEl = document.getElementById("gamepads")
+
+        function gamepadHandler(event, connecting) {
+            var gamepad = event.gamepad;
+
+            if (connecting) {
+                var el = document.createElement("div")
+                el.setAttribute("data-id", gamepad.index)
+                el.innerHTML = "<span data-left='" + gamepad.index + "'><</span>CTRL" + gamepad.index + "<span data-right='" + gamepad.index + "'>></span>"
+                el.style.paddingLeft = "120px"
+                gamepadEl.appendChild(el)
+            } else {
+                if (whiteControler == gamepad.index) whiteControler = false;
+                if (blackControler == gamepad.index) blackControler = false;
+
+                gamepadEl.querySelector("[data-id=" + gamepad.index + "]").remove()
+
+            }
+        }
+        gamepadEl.addEventListener("click", e => {
+            if (e.target.hasAttribute("data-left") && whiteControler === false) {
+                e.target.parentNode.style.paddingLeft = "0px"
+                let id = parseInt(e.target.getAttribute("data-left"));
+                whiteControler = id
+                if (blackControler == id) blackControler = false
+            }
+            if (e.target.hasAttribute("data-right") && blackControler === false) {
+                e.target.parentNode.style.paddingLeft = "270px"
+                let id = parseInt(e.target.getAttribute("data-right"));
+                blackControler = id
+                if (whiteControler == id) whiteControler = false
+            }
+        })
+
+        window.addEventListener("gamepadconnected", function (e) { gamepadHandler(e, true); }, false);
+        window.addEventListener("gamepaddisconnected", function (e) { gamepadHandler(e, false); }, false);
+
+        (async _ => {
+            let whiteFighterImage = await loadImage("white.png")
+            let blackFighterImage = await loadImage("black.png")
+
+
+            let whiteFighter = new Fighter(_ => {
+                if (whiteControler !== false) {
+                    let gamepad = navigator.getGamepads()[whiteControler];
+                    return {
+                        dir: gamepad.axes[0],
+                        fire: gamepad.buttons[0].pressed
+                    }
+                }
+                return {
+                    dir: (keys[65] === true ? -1 : (keys[68] === true ? 1 : 0)),
+                    fire: keys[83] === true
+                }
+            }, whiteFighterImage, "#FFFFFF",false, _ => {
+                if (whiteControler !== false) {
+                    let gamepad = navigator.getGamepads()[whiteControler];
+                    gamepad.vibrationActuator.playEffect("dual-rumble", {
+                        startDelay: 0,
+                        duration: 200,
+                        weakMagnitude: 1.0,
+                        strongMagnitude: 1.0
+                    });
+                }
+            })
+
+            let blackFighter = new Fighter(_ => {
+                if (blackControler !== false) {
+                    let gamepad = navigator.getGamepads()[blackControler];
+                    return {
+                        dir: gamepad.axes[0],
+                        fire: gamepad.buttons[0].pressed
+                    }
+                }
+                return {
+                    dir: (keys[37] === true ? -1 : (keys[39] === true ? 1 : 0)),
+                    fire: keys[38] === true
+                }
+            }, blackFighterImage, "#000000", true, _ => {
+                if (blackControler !== false) {
+                    let gamepad = navigator.getGamepads()[blackControler];
+                    gamepad.vibrationActuator.playEffect("dual-rumble", {
+                        startDelay: 0,
+                        duration: 200,
+                        weakMagnitude: 1.0,
+                        strongMagnitude: 1.0
+                    });
+                }
+            })
+
+            whiteFighter.otherJets = [blackFighter]
+            blackFighter.otherJets = [whiteFighter]
+
+            let game = new GameLoop((ms, opt) => {
+                whiteFighter.render(ctx, ms, opt)
+                blackFighter.render(ctx, ms, opt)
+
+                ctx.font = '50px helvetica';
+                ctx.fillStyle = '#ffffff';
+                ctx.fillText(whiteFighter.points, 90, 50);
+                ctx.fillStyle = '#000000';
+                ctx.fillText(blackFighter.points, 190, 50);
+            }, ctx, el)
+            game.start()
+
+
+        })()
+
+
+    </script>
+
+</body>
+
+</html>
